@@ -15,11 +15,14 @@ void initColon() {
 void handleColon() {
   toggleSeconds = !toggleSeconds;
   if (toggleSeconds) {
-    SetupAnimations(colonColor, RgbColor(0, 0, 0));
+    //SetupAnimations(colonColor, RgbColor(0, 0, 0));
+    SetupAnimations(colonColor, colonColor);
   }
   else {
-    strip.ClearTo(RgbColor(0, 0, 0));
-    SetupAnimations(RgbColor(0, 0, 0), colonColor);
+    //strip.ClearTo(RgbColor(0, 0, 0));
+    //SetupAnimations(RgbColor(0, 0, 0), colonColor);
+    strip.ClearTo(colonColor);
+    SetupAnimations(colonColor, colonColor);
   }
 }
 

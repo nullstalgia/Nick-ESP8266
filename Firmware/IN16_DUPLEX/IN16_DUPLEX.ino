@@ -24,7 +24,7 @@
 
 #define AP_NAME "NICK_IN16D_"
 #define FW_VERSION "2.00"
-#define CONFIG_TIMEOUT 300000 // 300000 = 5 minutes
+#define CONFIG_TIMEOUT 30 // 300000 = 5 minutes
 
 // ONLY CHANGE DEFINES BELOW IF YOU KNOW WHAT YOU'RE DOING!
 #define NORMAL_MODE 0
@@ -126,11 +126,11 @@ uint8_t digitPins[4][11][4] = {
   },
 };
 // Cathode poisoning prevention pattern --> circle through least used digits, prioritize number 7
-uint8_t healPattern[4][10] = {
-  {7, 3, 4, 7, 5, 6, 7, 8, 7, 9},
-  {4, 5, 6, 7, 8, 9, 6, 7, 8, 9},
-  {6, 7, 8, 7, 9, 6, 7, 8, 9, 7},
-  {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+uint8_t healPattern[44] = {
+  7, 3, 4, 7, 5, 6, 7, 8, 7, 9,
+  4, 5, 6, 7, 8, 9, 6, 7, 8, 9,
+  6, 7, 8, 7, 9, 6, 7, 8, 9, 7,
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 3, 4, 7
 };
 // Multiplexing timings (in milliseconds) for brightness, first value = ON TIME, second value = OFF TIME
 // These values need to be as low as possible but also the lower they are, the more likely there will be visible
@@ -151,7 +151,7 @@ bool toggleSeconds = false;
 byte mac[6];
 volatile uint8_t multiplexState = 0;
 volatile uint8_t digitsCache[] = {0, 0, 0, 0};
-uint8_t healIterator, bri;
+uint8_t healIterator, secondHealIterator, bri;
 uint8_t timeUpdateStatus = 0; // 0 = no update, 1 = update success, 2 = update fail,
 uint8_t failedAttempts = 0;
 RgbColor colonColor;
@@ -174,6 +174,18 @@ WiFiClient espClient;
 WiFiUDP Udp;
 ESP8266HTTPUpdateServer httpUpdateServer;
 unsigned int localPort = 8888;  // local port to listen for UDP packets
+
+uint16_t currentUpdateRate = 1000;
+
+int sleep_hour;
+int wake_hour;
+int dim_hour;
+int cathode_start;
+int cathode_end;
+
+bool inSleepRange;
+bool inDimRange;
+bool inHealRange;
 
 // the setup function runs once when you press reset or power the board
 void setup() {
@@ -284,10 +296,31 @@ void setup() {
     delay(500);
   }
 
+  wake_hour = json["wake_hour"].as<int>();
+  if (wake_hour == -1){
+    dim_hour = -1;
+    sleep_hour = -1;
+  } else {
+    dim_hour = json["dim_hour"].as<int>();
+    sleep_hour = json["sleep_hour"].as<int>();
+  }
+
+  cathode_start = json["cathode_start"].as<int>();
+  cathode_end = json["cathode_end"].as<int>();
+
+  if (cathode_start == -1 || cathode_end == -1) {
+    cathode_start = -1;
+    cathode_end = -1;
+  }
+
+  
 }
 
+bool whistle;
+int currentHour;
 // the loop function runs over and over again forever
 void loop() {
+  
 
   if (timeUpdateFirst == true && timeUpdateStatus == UPDATE_FAIL || deviceMode == CONNECTION_FAIL) {
     setAllDigitsTo(0);
@@ -296,16 +329,40 @@ void loop() {
     return;
   }
 
-  if (millis() - prevDisplayMillis >= 1000) { //update the display only if time has changed
+  if (millis() - prevDisplayMillis >= currentUpdateRate) { //update the display only if time has changed
+    currentHour = hour();
     prevDisplayMillis = millis();
+    // https://stackoverflow.com/a/17213258
+    inSleepRange = wake_hour > sleep_hour && currentHour >= sleep_hour && currentHour <= wake_hour || wake_hour < sleep_hour && (currentHour >= sleep_hour || currentHour <= wake_hour);
+    inDimRange = wake_hour > dim_hour && currentHour >= dim_hour && currentHour <= wake_hour || wake_hour < dim_hour && (currentHour >= dim_hour || currentHour <= wake_hour);
+    inHealRange = cathode_end > cathode_start && currentHour >= cathode_start && currentHour <= cathode_end || cathode_end < cathode_start && (currentHour >= cathode_start || currentHour <= cathode_end);
+    if (cathode_start == -1)
+      inHealRange = false;
     toggleNightMode();
+    whistle = false;
 
+    bool readyToSleep = inSleepRange && sleep_hour != -1;
+    bool cathode_1_Check = json["cathode"].as<int>() == 1 && inHealRange && currentHour % 2 != 0 && minute() <= 10;
+    bool cathode_2_Check = json["cathode"].as<int>() == 2 && ((inHealRange && currentHour % 2 != 0 && minute() <= 10) || (minute() < 1 && currentHour % 2 != 0));
+    bool cathode_3_Check = json["cathode"].as<int>() == 3 && ((inHealRange && currentHour % 2 == 0 && minute() <= 10) || (minute() < 1 && currentHour % 2 == 0));
+    //if (longHealEnabled && readyToSleep) {
+      
+    //}
+    if (readyToSleep && !((cathode_1_Check || cathode_2_Check || cathode_3_Check))) {
+      // is supposed to be blank, don't want it to write to the tubes when its supposed to be sleeping.
+      currentUpdateRate = 1000;
+    } else
     if (
-      (json["cathode"].as<int>() == 1 && (hour() >= 2 && hour() <= 6) && minute() < 10) ||
-      (json["cathode"].as<int>() == 2 && (((hour() >= 2 && hour() <= 6) && minute() < 10) || minute() < 1))
+      (cathode_1_Check) ||
+      (cathode_2_Check) ||
+      (cathode_3_Check)
     ) {
+      currentUpdateRate = 800;
       healingCycle(); // do healing loop if the time is right :)
+      whistle = true;
     } else {
+      currentUpdateRate = 1000;
+      whistle = false;
       if (timeUpdateStatus) {
         if (timeUpdateStatus == UPDATE_SUCCESS) {
           setTemporaryColonColor(5, green[bri]);
@@ -326,8 +383,14 @@ void loop() {
   }
 
   if (animations.IsAnimating()) animations.UpdateAnimations();
+  
   strip.SetPixelColor(1, RgbColor(0, 0, 0));
   strip.SetPixelColor(3, RgbColor(0, 0, 0));
+
+  //strip.SetPixelColor(0, RgbColor(0, 0, 0));
+  //strip.SetPixelColor(2, RgbColor(0, 0, 0));
+  //strip.SetPixelColor(4, RgbColor(0, 0, 0));
+  
   //strip.SetPixelColor(3, RgbColor(0, 0, 0));
   strip.Show();
 
