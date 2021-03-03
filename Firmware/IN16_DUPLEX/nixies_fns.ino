@@ -135,7 +135,8 @@ void showIP(int delay_ms) {
 void toggleNightMode() {
   if (wake_hour == -1) return;
   if (inSleepRange && sleep_hour != -1){
-      blankAllDigits();
+      if (!inHealRange)
+        blankAllDigits();
       bri = 0;
       return;
   }
