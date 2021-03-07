@@ -349,7 +349,9 @@ void loop() {
       
     //}
     if (readyToSleep && !((cathode_1_Check || cathode_2_Check || cathode_3_Check))) {
-      // is supposed to be blank, don't want it to write to the tubes when its supposed to be sleeping.
+      // is supposed to be mostly blank, don't want it to write to the tubes when its supposed to be sleeping.
+      if (!inHealRange)
+        strip.ClearTo(RgbColor(0, 0, 0)); // black/off
       currentUpdateRate = 1000;
     } else
     if (
